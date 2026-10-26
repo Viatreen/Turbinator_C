@@ -1,0 +1,40 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "p3000",
+      "displayName": "Quadro P3000 6 GB",
+      "description": "Pascal sm_61, compact C11 learner and batched CUDA sensor features",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-p3000",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "TURBINATOR_ENABLE_CUDA": "ON",
+        "TURBINATOR_P3000_MODE": "ON",
+        "TURBINATOR_P3000_AVX2": "ON",
+        "TURBINATOR_BUILD_VIEWER": "OFF"
+      }
+    },
+    {
+      "name": "v100",
+      "displayName": "Tesla V100 16 GB",
+      "description": "Volta sm_70 and the 617973042-parameter CUDA learner",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-v100",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "TURBINATOR_ENABLE_CUDA": "ON",
+        "TURBINATOR_ENABLE_LARGE_GPU": "ON",
+        "TURBINATOR_CUDA_ARCHITECTURES": "70"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "p3000", "configurePreset": "p3000" },
+    { "name": "v100", "configurePreset": "v100" }
+  ],
+  "testPresets": [
+    { "name": "p3000", "configurePreset": "p3000", "output": { "outputOnFailure": true } },
+    { "name": "v100", "configurePreset": "v100", "output": { "outputOnFailure": true } }
+  ]
+}

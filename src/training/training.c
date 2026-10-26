@@ -379,17 +379,49 @@ void tb_sac_destroy(tb_sac_agent *a) {
 size_t tb_sac_replay_size(const tb_sac_agent *a) { return a ? a->size : 0; }
 uint64_t tb_sac_update_count(const tb_sac_agent *a) { return a ? a->updates : 0; }
 
-int tb_sac_act(tb_sac_agent *a, const float obs[TB_TRAIN_OBSERVATION_DIM],
-               const float mission[TB_TRAIN_MISSION_DIM], const uint8_t *cameras,
-               int deterministic, float out_action[TB_TRAIN_ACTION_DIM], float *out_log_probability) {
-    if (!a || !obs || !mission || !out_action) return 0;
-    float feature[TB_TRAIN_FEATURE_DIM];
+int tb_sac_act_features(tb_sac_agent *a, const float feature[TB_TRAIN_FEATURE_DIM],
+                        int deterministic, float out_action[TB_TRAIN_ACTION_DIM],
+                        float *out_log_probability) {
+    if (!a || !feature || !out_action) return 0;
     tb_net_cache cache;
     tb_actor_state state;
-    tb_train_extract_features_cpu(obs, mission, cameras, feature);
     tb_actor_sample(&a->actor, feature, &a->rng, deterministic, &cache, &state);
     memcpy(out_action, state.action, sizeof(state.action));
     if (out_log_probability) *out_log_probability = state.log_probability;
+    return 1;
+}
+
+int tb_sac_act(tb_sac_agent *a, const float obs[TB_TRAIN_OBSERVATION_DIM],
+               const float mission[TB_TRAIN_MISSION_DIM], const uint8_t *cameras,
+               int deterministic, float out_action[TB_TRAIN_ACTION_DIM], float *out_log_probability) {
+    if (!obs || !mission) return 0;
+    float feature[TB_TRAIN_FEATURE_DIM];
+    tb_train_extract_features_cpu(obs, mission, cameras, feature);
+    return tb_sac_act_features(a, feature, deterministic, out_action, out_log_probability);
+}
+
+int tb_sac_add_transition_features(tb_sac_agent *a,
+                                   const float feature[TB_TRAIN_FEATURE_DIM],
+                                   const float privileged[TB_TRAIN_PRIVILEGED_DIM],
+                                   const float action[TB_TRAIN_ACTION_DIM],
+                                   const float reference_action[TB_TRAIN_ACTION_DIM], float reward,
+                                   const float next_feature[TB_TRAIN_FEATURE_DIM],
+                                   const float next_privileged[TB_TRAIN_PRIVILEGED_DIM], int done) {
+    if (!a || !feature || !privileged || !action || !reference_action ||
+        !next_feature || !next_privileged) return 0;
+    tb_replay_transition *t = &a->replay[a->cursor];
+    memcpy(t->feature, feature, sizeof(t->feature));
+    memcpy(t->next_feature, next_feature, sizeof(t->next_feature));
+    memcpy(t->privileged, privileged, sizeof(t->privileged));
+    memcpy(t->next_privileged, next_privileged, sizeof(t->next_privileged));
+    for (int i = 0; i < TB_TRAIN_ACTION_DIM; ++i) {
+        t->action[i] = tb_clampf(tb_finite(action[i]), -1.0f, 1.0f);
+        t->reference_action[i] = tb_clampf(tb_finite(reference_action[i]), -1.0f, 1.0f);
+    }
+    t->reward = tb_clampf(tb_finite(reward), -100.0f, 100.0f);
+    t->done = done ? 1 : 0;
+    a->cursor = (a->cursor + 1) % a->cfg.replay_capacity;
+    if (a->size < a->cfg.replay_capacity) ++a->size;
     return 1;
 }
 
@@ -403,20 +435,12 @@ int tb_sac_add_transition(tb_sac_agent *a, const float obs[TB_TRAIN_OBSERVATION_
                           const float next_privileged[TB_TRAIN_PRIVILEGED_DIM], int done) {
     if (!a || !obs || !mission || !privileged || !action || !reference_action ||
         !next_obs || !next_mission || !next_privileged) return 0;
-    tb_replay_transition *t = &a->replay[a->cursor];
-    tb_train_extract_features_cpu(obs, mission, cameras, t->feature);
-    tb_train_extract_features_cpu(next_obs, next_mission, next_cameras, t->next_feature);
-    memcpy(t->privileged, privileged, sizeof(t->privileged));
-    memcpy(t->next_privileged, next_privileged, sizeof(t->next_privileged));
-    for (int i = 0; i < TB_TRAIN_ACTION_DIM; ++i) {
-        t->action[i] = tb_clampf(tb_finite(action[i]), -1.0f, 1.0f);
-        t->reference_action[i] = tb_clampf(tb_finite(reference_action[i]), -1.0f, 1.0f);
-    }
-    t->reward = tb_clampf(tb_finite(reward), -100.0f, 100.0f);
-    t->done = done ? 1 : 0;
-    a->cursor = (a->cursor + 1) % a->cfg.replay_capacity;
-    if (a->size < a->cfg.replay_capacity) ++a->size;
-    return 1;
+    float feature[TB_TRAIN_FEATURE_DIM], next_feature[TB_TRAIN_FEATURE_DIM];
+    tb_train_extract_features_cpu(obs, mission, cameras, feature);
+    tb_train_extract_features_cpu(next_obs, next_mission, next_cameras, next_feature);
+    return tb_sac_add_transition_features(a, feature, privileged, action,
+                                          reference_action, reward, next_feature,
+                                          next_privileged, done);
 }
 
 static void tb_alpha_step(tb_sac_agent *a, float mean_logp) {

@@ -72,6 +72,14 @@ int tb_sac_act(tb_sac_agent *agent,
                float out_action[TB_TRAIN_ACTION_DIM],
                float *out_log_probability);
 
+/* Precomputed 142-value features can be supplied by a batched CUDA sensor
+ * extractor while the compact SAC networks and optimizer stay in C11. */
+int tb_sac_act_features(tb_sac_agent *agent,
+                        const float features[TB_TRAIN_FEATURE_DIM],
+                        int deterministic,
+                        float out_action[TB_TRAIN_ACTION_DIM],
+                        float *out_log_probability);
+
 int tb_sac_add_transition(tb_sac_agent *agent,
                           const float obs[TB_TRAIN_OBSERVATION_DIM],
                           const float mission[TB_TRAIN_MISSION_DIM],
@@ -85,6 +93,15 @@ int tb_sac_add_transition(tb_sac_agent *agent,
                           const uint8_t *next_cameras,
                           const float next_privileged[TB_TRAIN_PRIVILEGED_DIM],
                           int done);
+int tb_sac_add_transition_features(tb_sac_agent *agent,
+                                   const float features[TB_TRAIN_FEATURE_DIM],
+                                   const float privileged[TB_TRAIN_PRIVILEGED_DIM],
+                                   const float action[TB_TRAIN_ACTION_DIM],
+                                   const float reference_action[TB_TRAIN_ACTION_DIM],
+                                   float reward,
+                                   const float next_features[TB_TRAIN_FEATURE_DIM],
+                                   const float next_privileged[TB_TRAIN_PRIVILEGED_DIM],
+                                   int done);
 
 /* Returns 1 after a gradient update, 0 if replay is empty or input invalid. */
 int tb_sac_update(tb_sac_agent *agent, size_t batch_size, tb_train_metrics *out);

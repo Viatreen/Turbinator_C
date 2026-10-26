@@ -1,0 +1,50 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.turbinator.nativec'
+    compileSdk 35
+    ndkVersion '27.2.12479018'
+
+    defaultConfig {
+        applicationId 'com.turbinator.nativec'
+        minSdk 29
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+
+        externalNativeBuild {
+            cmake {
+                arguments '-DTURBINATOR_ENABLE_CUDA=OFF',
+                          '-DTURBINATOR_BUILD_TESTS=OFF',
+                          '-DTURBINATOR_BUILD_TRAINER=OFF'
+                targets 'turbinator_mobile'
+            }
+        }
+
+        ndk {
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
+    }
+
+    sourceSets {
+        main {
+            manifest.srcFile '../../src/android/AndroidManifest.xml'
+            java.srcDirs = []
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path '../../CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}

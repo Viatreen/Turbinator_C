@@ -2,6 +2,90 @@
 
 #include <cuda_runtime.h>
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+struct tb_cuda_feature_batch {
+    int device_id;
+    size_t max_batch;
+    cudaStream_t stream;
+    float *obs;
+    float *mission;
+    unsigned char *cameras;
+    float *features;
+    char error[192];
+};
+
+static int tb_feature_fail(tb_cuda_feature_batch *batch, const char *stage,
+                           cudaError_t status) {
+    if (batch) snprintf(batch->error, sizeof(batch->error), "%s: %s",
+                        stage, cudaGetErrorString(status));
+    return 0;
+}
+
+extern "C" tb_cuda_feature_batch *tb_cuda_feature_batch_create(int device_id,
+                                                               size_t max_batch) {
+    if (max_batch == 0 || max_batch > 1024 || cudaSetDevice(device_id) != cudaSuccess)
+        return NULL;
+    tb_cuda_feature_batch *batch = (tb_cuda_feature_batch *)calloc(1, sizeof(*batch));
+    if (!batch) return NULL;
+    batch->device_id = device_id;
+    batch->max_batch = max_batch;
+    if (cudaStreamCreateWithFlags(&batch->stream, cudaStreamNonBlocking) != cudaSuccess ||
+        cudaMalloc((void **)&batch->obs, max_batch * 4148 * sizeof(float)) != cudaSuccess ||
+        cudaMalloc((void **)&batch->mission, max_batch * 10 * sizeof(float)) != cudaSuccess ||
+        cudaMalloc((void **)&batch->cameras, max_batch * 16384) != cudaSuccess ||
+        cudaMalloc((void **)&batch->features, max_batch * 142 * sizeof(float)) != cudaSuccess) {
+        tb_cuda_feature_batch_destroy(batch);
+        return NULL;
+    }
+    return batch;
+}
+
+extern "C" void tb_cuda_feature_batch_destroy(tb_cuda_feature_batch *batch) {
+    if (!batch) return;
+    cudaSetDevice(batch->device_id);
+    if (batch->stream) cudaStreamSynchronize(batch->stream);
+    cudaFree(batch->obs);
+    cudaFree(batch->mission);
+    cudaFree(batch->cameras);
+    cudaFree(batch->features);
+    if (batch->stream) cudaStreamDestroy(batch->stream);
+    free(batch);
+}
+
+extern "C" const char *tb_cuda_feature_batch_error(const tb_cuda_feature_batch *batch) {
+    return batch ? batch->error : "CUDA feature batch unavailable";
+}
+
+extern "C" int tb_cuda_extract_features_host(tb_cuda_feature_batch *batch,
+                                               const float *obs, const float *mission,
+                                               const unsigned char *cameras,
+                                               size_t count, float *out_features) {
+    if (!batch || !obs || !mission || !cameras || !out_features ||
+        count == 0 || count > batch->max_batch) return 0;
+    batch->error[0] = 0;
+    cudaError_t status = cudaSetDevice(batch->device_id);
+    if (status != cudaSuccess) return tb_feature_fail(batch, "select device", status);
+    status = cudaMemcpyAsync(batch->obs, obs, count * 4148 * sizeof(float),
+                             cudaMemcpyHostToDevice, batch->stream);
+    if (status != cudaSuccess) return tb_feature_fail(batch, "copy observations", status);
+    status = cudaMemcpyAsync(batch->mission, mission, count * 10 * sizeof(float),
+                             cudaMemcpyHostToDevice, batch->stream);
+    if (status != cudaSuccess) return tb_feature_fail(batch, "copy mission", status);
+    status = cudaMemcpyAsync(batch->cameras, cameras, count * 16384,
+                             cudaMemcpyHostToDevice, batch->stream);
+    if (status != cudaSuccess) return tb_feature_fail(batch, "copy cameras", status);
+    if (!tb_cuda_extract_features_device(batch->obs, batch->mission, batch->cameras,
+                                         batch->features, count, batch->stream))
+        return tb_feature_fail(batch, "extract features", cudaGetLastError());
+    status = cudaMemcpyAsync(out_features, batch->features, count * 142 * sizeof(float),
+                             cudaMemcpyDeviceToHost, batch->stream);
+    if (status != cudaSuccess) return tb_feature_fail(batch, "copy features", status);
+    status = cudaStreamSynchronize(batch->stream);
+    return status == cudaSuccess ? 1 : tb_feature_fail(batch, "synchronize features", status);
+}
 
 static __device__ float tb_cuda_clip(float value, float lo, float hi) {
     if (!isfinite(value)) return 0.0f;

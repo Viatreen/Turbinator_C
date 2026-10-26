@@ -1,16 +1,29 @@
 #include "sim_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdatomic.h>
 #include <string.h>
+#ifdef _MSC_VER
+#include <windows.h>
+#else
+#include <stdatomic.h>
+#endif
 
 typedef struct {double cl,cd,cy,roll,pitch,yaw;} TbAero6;
 static float *aero_table;
+#ifdef _MSC_VER
+static volatile LONG aero_init_state=0;
+static int aero_claim_init(void){return InterlockedCompareExchange(&aero_init_state,1,0)==0;}
+static int aero_state(void){return (int)InterlockedCompareExchange(&aero_init_state,0,0);}
+static void aero_done(void){InterlockedExchange(&aero_init_state,2);}
+#else
 static atomic_int aero_init_state=ATOMIC_VAR_INIT(0);
+static int aero_claim_init(void){int expected=0;return atomic_compare_exchange_strong(&aero_init_state,&expected,1);}
+static int aero_state(void){return atomic_load(&aero_init_state);}
+static void aero_done(void){atomic_store(&aero_init_state,2);}
+#endif
 static void load_aero_table(void){
-    int expected=0;
-    if(!atomic_compare_exchange_strong(&aero_init_state,&expected,1)){
-        while(atomic_load(&aero_init_state)!=2){}
+    if(!aero_claim_init()){
+        while(aero_state()!=2){}
         return;
     }
     const char *paths[]={"aero_5d_lookup_table.bin","data/aero_5d_lookup_table.bin","../data/aero_5d_lookup_table.bin","../../data/aero_5d_lookup_table.bin"};
@@ -19,10 +32,10 @@ static void load_aero_table(void){
         FILE *f=fopen(paths[i],"rb");if(!f)continue;
         if(fseek(f,0,SEEK_END)!=0||(size_t)ftell(f)!=scalars*sizeof(float)){fclose(f);continue;}
         rewind(f);float *p=(float*)malloc(scalars*sizeof(float));
-        if(p&&fread(p,sizeof(float),scalars,f)==scalars){aero_table=p;fclose(f);atomic_store(&aero_init_state,2);return;}
+        if(p&&fread(p,sizeof(float),scalars,f)==scalars){aero_table=p;fclose(f);aero_done();return;}
         free(p);fclose(f);
     }
-    atomic_store(&aero_init_state,2);
+    aero_done();
 }
 static void axis_coord(double v,double min,double step,int n,int *index,double *frac){
     double u=tb_clamp((v-min)/step,0,n-1);*index=(int)u;if(*index>n-2)*index=n-2;*frac=u-*index;
