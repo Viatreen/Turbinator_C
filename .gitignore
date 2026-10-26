@@ -1,0 +1,15 @@
+/build/
+/build-*/
+/smoke_season/
+/seasons/
+/.vs/
+/.vscode/
+*.exe
+*.dll
+*.a
+*.o
+*.obj
+*.tbc
+*.jsonl
+*.tmp
+*.log
